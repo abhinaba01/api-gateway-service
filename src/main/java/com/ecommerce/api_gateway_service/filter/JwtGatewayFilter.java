@@ -1,5 +1,8 @@
 package com.ecommerce.api_gateway_service.filter;
 
+
+
+import com.ecommerce.api_gateway_service.security.JwtService;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.http.HttpStatus;
@@ -12,9 +15,9 @@ import reactor.core.publisher.Mono;
 public class JwtGatewayFilter implements GlobalFilter {
 
 
-    private final com.ecommerce.userservice.security.JwtService jwtService;
+    private final  JwtService jwtService;
 
-    public JwtGatewayFilter(com.ecommerce.userservice.security.JwtService jwtService) {
+    public JwtGatewayFilter(JwtService jwtService) {
         this.jwtService = jwtService;
     }
 
@@ -25,7 +28,7 @@ public class JwtGatewayFilter implements GlobalFilter {
         ServerHttpRequest request = exchange.getRequest();
         String path = request.getPath().toString();
 
-        // Let auth endpoints through without token
+
         if (path.startsWith("/auth/")) {
             return chain.filter(exchange);  // Mono<Void> not void
         }
@@ -34,14 +37,6 @@ public class JwtGatewayFilter implements GlobalFilter {
                                    .getFirst("Authorization");
 
 
-        String token = authHeader.substring(7);
-
-        if (!jwtService.isTokenValid(token)) {
-            exchange.getResponse()
-                    .setStatusCode(HttpStatus.UNAUTHORIZED);
-
-            return exchange.getResponse().setComplete();
-        }
 
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             exchange.getResponse()
@@ -49,7 +44,57 @@ public class JwtGatewayFilter implements GlobalFilter {
             return exchange.getResponse().setComplete(); // Mono<Void>
         }
 
+
+        String token = authHeader.substring(7);
+
+        String role = jwtService.extractRole(token);
+
+
+
+        if (path.startsWith("/admin/")
+                && !role.equals("ADMIN")) {
+
+            exchange.getResponse()
+                    .setStatusCode(HttpStatus.FORBIDDEN);
+
+            return exchange.getResponse().setComplete();
+        }
+
+        if (path.startsWith("/products")
+                && (request.getMethod().name().equals("POST")
+                || request.getMethod().name().equals("PUT")
+                || request.getMethod().name().equals("DELETE"))
+                && !role.equals("BUSINESS")) {
+
+            exchange.getResponse()
+                    .setStatusCode(HttpStatus.FORBIDDEN);
+
+            return exchange.getResponse().setComplete();
+        }
+
+        if (!jwtService.isValid(token)) {
+            exchange.getResponse()
+                    .setStatusCode(HttpStatus.UNAUTHORIZED);
+
+            return exchange.getResponse().setComplete();
+        }
+
+        Long userId = jwtService.extractId(token);
+
+        ServerHttpRequest mutatedRequest =
+                request.mutate()
+                        .header(
+                                "X-User-Id",
+                                String.valueOf(userId)
+                        )
+                        .build();
+
+        ServerWebExchange mutatedExchange =
+                exchange.mutate()
+                        .request(mutatedRequest)
+                        .build();
+
         // validate token, forward request
-        return chain.filter(exchange);
+        return chain.filter(mutatedExchange);
     }
 }
